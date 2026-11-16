@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DMV Wait-Time Manager</title>
+<style>
+  :root { --green:#1E4D3A; --amber:#F2A900; --red:#C44536; --ink:#1B1F1D; --muted:#5C6B66; --soft:#EEF3F0; --line:#D5DED9; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Segoe UI", Calibri, Arial, sans-serif; color:var(--ink); background:#F7F9F8; }
+  header { background:var(--green); color:#fff; padding:22px 32px; }
+  header h1 { margin:0; font-size:26px; }
+  header p { margin:6px 0 0; opacity:.85; font-size:15px; }
+  main { max-width:1180px; margin:0 auto; padding:24px 32px 40px; }
+  h2 { font-size:18px; margin:0 0 12px; }
+  .panel { background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:20px; }
+  .switches { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .switch { display:flex; gap:12px; align-items:flex-start; padding:14px; border:2px solid var(--line); border-radius:10px; cursor:pointer; background:#fff; text-align:left; font:inherit; color:inherit; }
+  .switch[aria-checked="true"] { border-color:var(--green); background:var(--soft); }
+  .knob { flex:none; width:44px; height:24px; border-radius:12px; background:#C9D3CE; position:relative; margin-top:2px; transition:background .15s; }
+  .knob::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s; }
+  .switch[aria-checked="true"] .knob { background:var(--green); }
+  .switch[aria-checked="true"] .knob::after { left:23px; }
+  .switch b { display:block; font-size:15px; }
+  .switch span.sub { font-size:13px; color:var(--muted); }
+  .row { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  button.reset { font:inherit; font-size:14px; border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 12px; cursor:pointer; }
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .kpi { background:var(--soft); border-radius:10px; padding:14px 16px; }
+  .kpi .value { font-size:34px; font-weight:700; color:var(--green); line-height:1.1; }
+  .kpi .label { font-size:14px; margin-top:4px; }
+  .kpi .delta { font-size:13px; margin-top:6px; color:var(--muted); }
+  .delta.good { color:#2E7D4F; font-weight:600; }
+  .delta.bad { color:var(--red); font-weight:600; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .bar-row { display:grid; grid-template-columns:190px 1fr 70px; align-items:center; gap:10px; margin:8px 0; font-size:14px; }
+  .track { height:22px; background:#F0F3F1; border-radius:4px; position:relative; overflow:hidden; }
+  .fill { height:100%; background:var(--green); border-radius:4px; transition:width .3s; }
+  .fill.over { background:var(--amber); }
+  .target { position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--red); }
+  .num { text-align:right; font-weight:600; }
+  .note { font-size:13px; color:var(--muted); margin-top:10px; }
+  .summary { font-size:16px; line-height:1.5; }
+  @media (max-width:900px) { .switches,.kpis,.grid2 { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>DMV Wait-Time Manager</h1>
+  <p>busy_day.csv (35 customers) &middot; Goal: nobody waits more than 15 minutes</p>
+</header>
+<main>
+  <section class="panel">
+    <div class="row"><h2>Try a change</h2><button class="reset" id="reset">Back to current setup</button></div>
+    <div class="switches">
+      <button class="switch" role="switch" aria-checked="false" data-key="a">
+        <span class="knob"></span><span><b>Serve appointments first</b><span class="sub">Appointment customers go ahead of walk-ins</span></span>
+      </button>
+      <button class="switch" role="switch" aria-checked="false" data-key="f">
+        <span class="knob"></span><span><b>Cross-train the Vehicle clerk</b><span class="sub">They also help licensing customers when free</span></span>
+      </button>
+      <button class="switch" role="switch" aria-checked="false" data-key="r">
+        <span class="knob"></span><span><b>Add a second Records clerk</b><span class="sub">One more person on the Records counter</span></span>
+      </button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Results for this setup</h2>
+    <div class="kpis">
+      <div class="kpi"><div class="value" id="k-avg"></div><div class="label">Average wait</div><div class="delta" id="d-avg"></div></div>
+      <div class="kpi"><div class="value" id="k-over"></div><div class="label">People waiting over 15 min</div><div class="delta" id="d-over"></div></div>
+      <div class="kpi"><div class="value" id="k-long"></div><div class="label">Longest wait</div><div class="delta" id="d-long"></div></div>
+      <div class="kpi"><div class="value" id="k-clerks"></div><div class="label">Clerks on duty</div><div class="delta" id="d-clerks"></div></div>
+    </div>
+    <p class="summary" id="summary"></p>
+  </section>
+
+  <div class="grid2">
+    <section class="panel">
+      <h2>Average wait by service (minutes)</h2>
+      <div id="services"></div>
+      <p class="note">Red line = 15-minute goal. Yellow bars: someone in this service waited longer than the goal.</p>
+    </section>
+    <section class="panel">
+      <h2>How busy each counter was</h2>
+      <div id="counters"></div>
+      <p class="note">Share of the day each counter spent helping a customer. A low number means the clerk was often free.</p>
+    </section>
+  </div>
+  <p class="note">Calculated by the C++ simulation from sample data. "Current setup" = all switches off.</p>
+</main>
+
+<script>
+const DATA = {"a0f0r0":{"clerks":3,"all":{"label":"All customers","count":35,"avg":8.31,"median":3.00,"longest":36,"over":7},"appointment":{"label":"Appointment","count":13,"avg":4.92,"median":0.00,"longest":26,"over":1},"walkin":{"label":"Walk-in","count":22,"avg":10.32,"median":7.00,"longest":36,"over":6},"services":[{"label":"Driver Licensing","count":11,"avg":13.64,"median":10.00,"longest":34,"over":4},{"label":"Driver Records \u0026 Compliance","count":9,"avg":10.00,"median":0.00,"longest":36,"over":3},{"label":"Identification Services","count":7,"avg":3.43,"median":0.00,"longest":14,"over":0},{"label":"Special Permits","count":4,"avg":3.25,"median":1.00,"longest":11,"over":0},{"label":"Vehicle Registration \u0026 Titling","count":4,"avg":3.50,"median":0.00,"longest":14,"over":0}],"counters":[{"name":"Licensing 1","served":18,"busy":56.05},{"name":"Vehicle 2","served":4,"busy":17.38},{"name":"Records 3","served":13,"busy":36.72}]},"a0f0r1":{"clerks":4,"all":{"label":"All customers","count":35,"avg":5.71,"median":0.00,"longest":34,"over":4},"appointment":{"label":"Appointment","count":13,"avg":4.31,"median":0.00,"longest":26,"over":1},"walkin":{"label":"Walk-in","count":22,"avg":6.55,"median":0.00,"longest":34,"over":3},"services":[{"label":"Driver Licensing","count":11,"avg":13.64,"median":10.00,"longest":34,"over":4},{"label":"Driver Records \u0026 Compliance","count":9,"avg":1.00,"median":0.00,"longest":9,"over":0},{"label":"Identification Services","count":7,"avg":3.43,"median":0.00,"longest":14,"over":0},{"label":"Special Permits","count":4,"avg":0.75,"median":0.00,"longest":3,"over":0},{"label":"Vehicle Registration \u0026 Titling","count":4,"avg":3.50,"median":0.00,"longest":14,"over":0}],"counters":[{"name":"Licensing 1","served":18,"busy":56.05},{"name":"Vehicle 2","served":4,"busy":17.38},{"name":"Records 3","served":9,"busy":25.78},{"name":"Records 4","served":4,"busy":10.94}]},"a0f1r0":{"clerks":3,"all":{"label":"All customers","count":35,"avg":3.57,"median":0.00,"longest":36,"over":3},"appointment":{"label":"Appointment","count":13,"avg":0.85,"median":0.00,"longest":11,"over":0},"walkin":{"label":"Walk-in","count":22,"avg":5.18,"median":0.00,"longest":36,"over":3},"services":[{"label":"Driver Licensing","count":11,"avg":0.73,"median":0.00,"longest":5,"over":0},{"label":"Driver Records \u0026 Compliance","count":9,"avg":10.00,"median":0.00,"longest":36,"over":3},{"label":"Identification Services","count":7,"avg":0.00,"median":0.00,"longest":0,"over":0},{"label":"Special Permits","count":4,"avg":3.25,"median":1.00,"longest":11,"over":0},{"label":"Vehicle Registration \u0026 Titling","count":4,"avg":3.50,"median":0.00,"longest":14,"over":0}],"counters":[{"name":"Licensing 1","served":13,"busy":38.09},{"name":"Flexible 2","served":9,"busy":35.35},{"name":"Records 3","served":13,"busy":36.72}]},"a0f1r1":{"clerks":4,"all":{"label":"All customers","count":35,"avg":0.97,"median":0.00,"longest":14,"over":0},"appointment":{"label":"Appointment","count":13,"avg":0.23,"median":0.00,"longest":3,"over":0},"walkin":{"label":"Walk-in","count":22,"avg":1.41,"median":0.00,"longest":14,"over":0},"services":[{"label":"Driver Licensing","count":11,"avg":0.73,"median":0.00,"longest":5,"over":0},{"label":"Driver Records \u0026 Compliance","count":9,"avg":1.00,"median":0.00,"longest":9,"over":0},{"label":"Identification Services","count":7,"avg":0.00,"median":0.00,"longest":0,"over":0},{"label":"Special Permits","count":4,"avg":0.75,"median":0.00,"longest":3,"over":0},{"label":"Vehicle Registration \u0026 Titling","count":4,"avg":3.50,"median":0.00,"longest":14,"over":0}],"counters":[{"name":"Licensing 1","served":13,"busy":38.09},{"name":"Flexible 2","served":9,"busy":35.35},{"name":"Records 3","served":9,"busy":25.78},{"name":"Records 4","served":4,"busy":10.94}]},"a1f0r0":{"clerks":3,"all":{"label":"All customers","count":35,"avg":8.80,"median":3.00,"longest":36,"over":8},"appointment":{"label":"Appointment","count":13,"avg":4.31,"median":0.00,"longest":26,"over":1},"walkin":{"label":"Walk-in","count":22,"avg":11.45,"median":8.00,"longest":36,"over":7},"services":[{"label":"Driver Licensing","count":11,"avg":13.64,"median":10.00,"longest":34,"over":4},{"label":"Driver Records \u0026 Compliance","count":9,"avg":12.78,"median":0.00,"longest":36,"over":4},{"label":"Identification Services","count":7,"avg":3.43,"median":0.00,"longest":14,"over":0},{"label":"Special Permits","count":4,"avg":1.25,"median":1.00,"longest":3,"over":0},{"label":"Vehicle Registration \u0026 Titling","count":4,"avg":3.50,"median":0.00,"longest":14,"over":0}],"counters":[{"name":"Licensing 1","served":18,"busy":56.05},{"name":"Vehicle 2","served":4,"busy":17.38},{"name":"Records 3","served":13,"busy":36.72}]},"a1f0r1":{"clerks":4,"all":{"label":"All customers","count":35,"avg":5.71,"median":0.00,"longest":34,"over":4},"appointment":{"label":"Appointment","count":13,"avg":4.31,"median":0.00,"longest":26,"over":1},"walkin":{"label":"Walk-in","count":22,"avg":6.55,"median":0.00,"longest":34,"over":3},"services":[{"label":"Driver Licensing","count":11,"avg":13.64,"median":10.00,"longest":34,"over":4},{"label":"Driver Records \u0026 Compliance","count":9,"avg":1.00,"median":0.00,"longest":9,"over":0},{"label":"Identification Services","count":7,"avg":3.43,"median":0.00,"longest":14,"over":0},{"label":"Special Permits","count":4,"avg":0.75,"median":0.00,"longest":3,"over":0},{"label":"Vehicle Registration \u0026 Titling","count":4,"avg":3.50,"median":0.00,"longest":14,"over":0}],"counters":[{"name":"Licensing 1","served":18,"busy":56.05},{"name":"Vehicle 2","served":4,"busy":17.38},{"name":"Records 3","served":9,"busy":25.78},{"name":"Records 4","served":4,"busy":10.94}]},"a1f1r0":{"clerks":3,"all":{"label":"All customers","count":35,"avg":4.06,"median":0.00,"longest":36,"over":4},"appointment":{"label":"Appointment","count":13,"avg":0.23,"median":0.00,"longest":3,"over":0},"walkin":{"label":"Walk-in","count":22,"avg":6.32,"median":0.00,"longest":36,"over":4},"services":[{"label":"Driver Licensing","count":11,"avg":0.73,"median":0.00,"longest":5,"over":0},{"label":"Driver Records \u0026 Compliance","count":9,"avg":12.78,"median":0.00,"longest":36,"over":4},{"label":"Identification Services","count":7,"avg":0.00,"median":0.00,"longest":0,"over":0},{"label":"Special Permits","count":4,"avg":1.25,"median":1.00,"longest":3,"over":0},{"label":"Vehicle Registration \u0026 Titling","count":4,"avg":3.50,"median":0.00,"longest":14,"over":0}],"counters":[{"name":"Licensing 1","served":13,"busy":38.09},{"name":"Flexible 2","served":9,"busy":35.35},{"name":"Records 3","served":13,"busy":36.72}]},"a1f1r1":{"clerks":4,"all":{"label":"All customers","count":35,"avg":0.97,"median":0.00,"longest":14,"over":0},"appointment":{"label":"Appointment","count":13,"avg":0.23,"median":0.00,"longest":3,"over":0},"walkin":{"label":"Walk-in","count":22,"avg":1.41,"median":0.00,"longest":14,"over":0},"services":[{"label":"Driver Licensing","count":11,"avg":0.73,"median":0.00,"longest":5,"over":0},{"label":"Driver Records \u0026 Compliance","count":9,"avg":1.00,"median":0.00,"longest":9,"over":0},{"label":"Identification Services","count":7,"avg":0.00,"median":0.00,"longest":0,"over":0},{"label":"Special Permits","count":4,"avg":0.75,"median":0.00,"longest":3,"over":0},{"label":"Vehicle Registration \u0026 Titling","count":4,"avg":3.50,"median":0.00,"longest":14,"over":0}],"counters":[{"name":"Licensing 1","served":13,"busy":38.09},{"name":"Flexible 2","served":9,"busy":35.35},{"name":"Records 3","served":9,"busy":25.78},{"name":"Records 4","served":4,"busy":10.94}]}};
+const TARGET = 15;
+const state = { a: false, f: false, r: false };
+const keyOf = s => "a" + (s.a ? 1 : 0) + "f" + (s.f ? 1 : 0) + "r" + (s.r ? 1 : 0);
+const base = DATA["a0f0r0"];
+const fmt = v => (Math.round(v * 10) / 10).toFixed(1);
+
+function delta(el, now, before, unit, lowerIsBetter) {
+  const diff = now - before;
+  el.className = "delta";
+  if (Math.abs(diff) < 0.05) { el.textContent = "Same as current setup"; return; }
+  const better = lowerIsBetter ? diff < 0 : diff > 0;
+  const pct = before !== 0 ? " (" + Math.round(Math.abs(diff) / before * 100) + "%)" : "";
+  el.textContent = (diff < 0 ? "▼ " : "▲ ") + (unit === "min" ? (Number.isInteger(diff) ? Math.abs(diff) : fmt(Math.abs(diff))) + " min" : Math.abs(diff) + (Math.abs(diff) === 1 ? " person" : " people")) + pct + " vs current";
+  el.classList.add(better ? "good" : "bad");
+}
+
+function bars(container, rows, max, valueText, isOver, showTarget) {
+  container.innerHTML = "";
+  rows.forEach(r => {
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    const pct = Math.min(100, max > 0 ? r.value / max * 100 : 0);
+    row.innerHTML = '<span></span><div class="track"><div class="fill"></div></div><span class="num"></span>';
+    row.children[0].textContent = r.label;
+    const fill = row.querySelector(".fill");
+    fill.style.width = pct + "%";
+    if (isOver(r)) fill.classList.add("over");
+    if (showTarget) {
+      const t = document.createElement("div");
+      t.className = "target";
+      t.style.left = Math.min(100, TARGET / max * 100) + "%";
+      row.querySelector(".track").appendChild(t);
+    }
+    row.children[2].textContent = valueText(r);
+    container.appendChild(row);
+  });
+}
+
+function render() {
+  const d = DATA[keyOf(state)];
+  document.getElementById("k-avg").textContent = fmt(d.all.avg) + " min";
+  document.getElementById("k-over").textContent = d.all.over;
+  document.getElementById("k-long").textContent = d.all.longest + " min";
+  document.getElementById("k-clerks").textContent = d.clerks;
+  delta(document.getElementById("d-avg"), d.all.avg, base.all.avg, "min", true);
+  delta(document.getElementById("d-over"), d.all.over, base.all.over, "people", true);
+  delta(document.getElementById("d-long"), d.all.longest, base.all.longest, "min", true);
+  const dc = document.getElementById("d-clerks");
+  dc.className = "delta";
+  dc.textContent = d.clerks > base.clerks ? "+" + (d.clerks - base.clerks) + " new hire" : "No new hires";
+
+  const maxWait = Math.max(TARGET * 1.6, ...Object.values(DATA).flatMap(x => x.services.map(s => s.avg)));
+  bars(document.getElementById("services"),
+       d.services.map(s => ({ label: s.label, value: s.avg, longest: s.longest })),
+       maxWait, r => fmt(r.value), r => r.longest > TARGET, true);
+  bars(document.getElementById("counters"),
+       d.counters.map(c => ({ label: c.name, value: c.busy })),
+       100, r => Math.round(r.value) + "%", () => false, false);
+
+  const change = base.all.avg > 0 ? Math.round((base.all.avg - d.all.avg) / base.all.avg * 100) : 0;
+  let text;
+  if (keyOf(state) === "a0f0r0") {
+    text = "This is the current setup: the average customer waits " + fmt(d.all.avg) + " minutes, and " +
+           d.all.over + " of " + d.all.count + " people wait longer than " + TARGET + " minutes.";
+  } else if (Math.abs(d.all.avg - base.all.avg) < 0.05) {
+    text = "With these changes, waits stay about the same as the current setup.";
+  } else {
+    text = "With these changes, the average wait " + (change > 0 ? "drops by " + change + "%" : "rises by " + (-change) + "%") +
+           " (" + fmt(base.all.avg) + " → " + fmt(d.all.avg) + " min). Appointment customers wait " + fmt(d.appointment.avg) +
+           " min and walk-ins " + fmt(d.walkin.avg) + " min on average.";
+  }
+  document.getElementById("summary").textContent = text;
+}
+
+document.querySelectorAll(".switch").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const k = btn.dataset.key;
+    state[k] = !state[k];
+    btn.setAttribute("aria-checked", state[k]);
+    render();
+  });
+});
+document.getElementById("reset").addEventListener("click", () => {
+  state.a = state.f = state.r = false;
+  document.querySelectorAll(".switch").forEach(b => b.setAttribute("aria-checked", "false"));
+  render();
+});
+render();
+</script>
+</body>
+</html>
