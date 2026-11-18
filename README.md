@@ -2,6 +2,8 @@
 
 **Live:** https://dmv-dashboard-omega.vercel.app
 
+**GitHub Pages:** https://elenakhtech.github.io/dmv-dashboard/
+
 A planning tool for DMV office managers. It shows how changes to the office
 would affect customer wait times, before you try them on real customers.
 
